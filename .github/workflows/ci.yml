@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run unit tests
+        run: PYTHONPATH=src python3 -m unittest discover -s tests
+
+      - name: Run CLI smoke test
+        run: |
+          config_file="$RUNNER_TEMP/pycorscage-smoke.json"
+          printf '%s' '{"allowed_origins":["https://app.example.com"],"allowed_methods":["GET","POST"],"allowed_headers":["content-type"],"max_age":60}' > "$config_file"
+          PYTHONPATH=src python3 -m pycorscage check --config "$config_file" --origin https://app.example.com --method GET --json
+          PYTHONPATH=src python3 -m pycorscage check --config "$config_file" --origin https://app.example.com --method POST --request-headers content-type --preflight --json
+          PYTHONPATH=src python3 -m pycorscage lint --config "$config_file" --json
+
+      - name: Build isolated distributions
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install build
+          python3 -m build
+
+      - name: Inspect distributions
+        run: python3 scripts/check_dist.py

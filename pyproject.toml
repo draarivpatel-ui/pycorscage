@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycorscage"
+version = "1.0.0"
+description = "Zero-dependency strict CORS origin validation, policy enforcement, middleware, and configuration auditing"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "pycorscage contributors" }]
+keywords = ["cors", "security", "wsgi", "asgi", "private-network-access", "cache-poisoning"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = []
+
+[project.scripts]
+pycorscage = "pycorscage.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/draarivpatel-ui/pycorscage"
+Repository = "https://github.com/draarivpatel-ui/pycorscage"
+Issues = "https://github.com/draarivpatel-ui/pycorscage/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pycorscage = ["py.typed"]
