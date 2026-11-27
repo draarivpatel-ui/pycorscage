@@ -6,23 +6,26 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -37,11 +40,11 @@ jobs:
           PYTHONPATH=src python3 -m pycorscage check --config "$config_file" --origin https://app.example.com --method POST --request-headers content-type --preflight --json
           PYTHONPATH=src python3 -m pycorscage lint --config "$config_file" --json
 
+      - name: Install hash pinned build tooling
+        run: python3 -m pip install --require-hashes -r .github/requirements-build.txt
+
       - name: Build isolated distributions
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install build
-          python3 -m build
+        run: python3 -m build
 
       - name: Inspect distributions
         run: python3 scripts/check_dist.py

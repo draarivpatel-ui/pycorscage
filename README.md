@@ -1,5 +1,7 @@
 # pycorscage
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/draarivpatel-ui/pycorscage/badge)](https://scorecard.dev/viewer/?uri=github.com/draarivpatel-ui/pycorscage)
+
 `pycorscage` is a zero-dependency Python 3.9+ CORS security policy engine with
 strict origin parsing, WSGI middleware, ASGI middleware, and a command-line
 configuration auditor. It treats CORS as a security boundary rather than a
