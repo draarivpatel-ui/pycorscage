@@ -243,6 +243,38 @@ def _normalize_domain_or_ipv4(host: str) -> Tuple[bool, str, str, Tuple[str, ...
     return True, lower, "domain", tuple(labels), ""
 
 
+def _canonical_ipv6(address: ipaddress.IPv6Address) -> str:
+    pieces = [int(group, 16) for group in address.exploded.split(":")]
+    best_start = -1
+    best_length = 0
+    index = 0
+    while index < len(pieces):
+        if pieces[index] != 0:
+            index += 1
+            continue
+        end = index
+        while end < len(pieces) and pieces[end] == 0:
+            end += 1
+        length = end - index
+        if length > best_length:
+            best_start = index
+            best_length = length
+        index = end
+
+    rendered = [format(piece, "x") for piece in pieces]
+    if best_length < 2:
+        return ":".join(rendered)
+    left = ":".join(rendered[:best_start])
+    right = ":".join(rendered[best_start + best_length :])
+    if left and right:
+        return left + "::" + right
+    if left:
+        return left + "::"
+    if right:
+        return "::" + right
+    return "::"
+
+
 def _parse_authority(authority: str) -> Tuple[bool, Optional[_Authority], str]:
     if authority == "":
         return False, None, "the host is empty"
@@ -275,7 +307,7 @@ def _parse_authority(authority: str) -> Tuple[bool, Optional[_Authority], str]:
             address = ipaddress.IPv6Address(host_text)
         except ValueError:
             return False, None, "the IPv6 literal is malformed"
-        serialized = "[" + str(address) + "]"
+        serialized = "[" + _canonical_ipv6(address) + "]"
         port_valid, explicit_port, port_reason = _parse_port_text(port_text, authority)
         if not port_valid:
             return False, None, port_reason or "the port is malformed"
