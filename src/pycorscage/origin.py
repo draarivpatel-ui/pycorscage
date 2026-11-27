@@ -244,7 +244,8 @@ def _normalize_domain_or_ipv4(host: str) -> Tuple[bool, str, str, Tuple[str, ...
 
 
 def _canonical_ipv6(address: ipaddress.IPv6Address) -> str:
-    pieces = [int(group, 16) for group in address.exploded.split(":")]
+    packed = address.packed
+    pieces = [(packed[index] << 8) | packed[index + 1] for index in range(0, 16, 2)]
     best_start = -1
     best_length = 0
     index = 0
