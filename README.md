@@ -325,8 +325,8 @@ Behavior:
 
 - true preflights are terminal with 204 or 403
 - non-preflight requests continue to the application
-- downstream `Access-Control-Allow-*` and `Access-Control-Expose-Headers`
-  values are stripped before policy headers are installed
+- downstream `Access-Control-Allow-*`, `Access-Control-Max-Age` and
+  `Access-Control-Expose-Headers` values are stripped before policy headers are installed
 - disallowed downstream responses receive no CORS grant
 - existing `Vary` values are preserved and merged without mutating caller data
 
@@ -391,9 +391,10 @@ Exit codes:
 
 The CLI opens configuration with `os.open` using `O_NOFOLLOW` and `O_NONBLOCK`
 where available, then verifies with `os.fstat` that the target is a regular
-file. Directories, devices, FIFOs, symlinks and files over 1048576 bytes are
-rejected. Errors and output are neutralized so filenames or input cannot inject
-terminal control sequences.
+file. Directories, devices, FIFOs, symlinks, files over 1048576 bytes, JSON
+nested beyond 128 container levels, duplicate object keys and non-standard JSON
+constants are rejected. Errors and output are neutralized so filenames or input
+cannot inject terminal control sequences.
 
 ## Configuration keys
 
@@ -442,7 +443,8 @@ medium and low findings are hardening and maintainability observations.
 
 ## Development
 
-Run the standard-library test suite:
+The regression suite currently runs 887 independently counted tests. Run the
+standard-library test suite:
 
 ```sh
 PYTHONPATH=src python3 -m unittest discover -s tests

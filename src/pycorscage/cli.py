@@ -17,6 +17,7 @@ from .linter import lint_cors_config
 from .policy import CorsPolicy
 
 MAX_CONFIG_BYTES = 1024 * 1024
+_MAX_JSON_NESTING_DEPTH = 128
 
 _CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
@@ -31,7 +32,8 @@ def neutralize_text(value: object) -> str:
     output = []
     for char in text:
         code = ord(char)
-        if char in ("\n", "\t") or (32 <= code != 127 and not unicodedata.category(char).startswith("C")):
+        category = unicodedata.category(char)
+        if 32 <= code != 127 and not category.startswith("C") and category not in {"Zl", "Zp"}:
             output.append(char)
         else:
             output.append("?")
@@ -50,6 +52,12 @@ class ConfigReadError(Exception):
     pass
 
 
+class NeutralizingArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, neutralize_text(self.prog + ": error: " + message) + "\n")
+
+
 def _object_without_duplicates(pairs):
     output = {}
     for key, value in pairs:
@@ -59,43 +67,100 @@ def _object_without_duplicates(pairs):
     return output
 
 
+def _reject_json_constant(value):
+    raise ValueError("non-standard JSON constant " + value)
+
+
+def _json_container_depth(text: str) -> int:
+    depth = 0
+    maximum = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[" or char == "{":
+            depth += 1
+            if depth > maximum:
+                maximum = depth
+        elif char == "]" or char == "}":
+            depth = max(0, depth - 1)
+    return maximum
+
+
 def read_config_file(path: str) -> Mapping[str, object]:
     """Read a bounded JSON config using a no-follow, nonblocking file open."""
 
+    try:
+        path_info = os.lstat(path)
+    except (OSError, ValueError) as exc:
+        raise ConfigReadError("cannot inspect config safely") from exc
+    if stat.S_ISLNK(path_info.st_mode):
+        raise ConfigReadError("config path must not be a symlink")
+
     flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
+    has_nofollow = hasattr(os, "O_NOFOLLOW")
+    if has_nofollow:
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_NONBLOCK"):
         flags |= os.O_NONBLOCK
     try:
         fd = os.open(path, flags)
-    except OSError as exc:
-        raise ConfigReadError("cannot open config safely: " + exc.strerror) from exc
+    except (OSError, ValueError) as exc:
+        raise ConfigReadError("cannot open config safely") from exc
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise ConfigReadError("config path is not a regular file")
-        if info.st_size > MAX_CONFIG_BYTES:
-            raise ConfigReadError("config file exceeds the 1048576 byte cap")
-        chunks = []
-        total = 0
-        while total <= MAX_CONFIG_BYTES:
-            chunk = os.read(fd, min(65536, MAX_CONFIG_BYTES + 1 - total))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            total += len(chunk)
-        if total > MAX_CONFIG_BYTES:
-            raise ConfigReadError("config file exceeds the 1048576 byte cap")
-        raw = b"".join(chunks)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise ConfigReadError("config path is not a regular file")
+            if not has_nofollow:
+                opened_path_info = os.lstat(path)
+                if stat.S_ISLNK(opened_path_info.st_mode) or (
+                    opened_path_info.st_dev,
+                    opened_path_info.st_ino,
+                ) != (info.st_dev, info.st_ino):
+                    raise ConfigReadError("config path must not be a symlink")
+            if info.st_size > MAX_CONFIG_BYTES:
+                raise ConfigReadError("config file exceeds the 1048576 byte cap")
+            chunks = []
+            total = 0
+            while total <= MAX_CONFIG_BYTES:
+                chunk = os.read(fd, min(65536, MAX_CONFIG_BYTES + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            if total > MAX_CONFIG_BYTES:
+                raise ConfigReadError("config file exceeds the 1048576 byte cap")
+            raw = b"".join(chunks)
+        except ConfigReadError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise ConfigReadError("cannot read config safely") from exc
     finally:
         os.close(fd)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ConfigReadError("config file is not valid UTF-8") from exc
+    if _json_container_depth(text) > _MAX_JSON_NESTING_DEPTH:
+        raise ConfigReadError("config JSON exceeds the 128 level nesting cap")
     try:
-        parsed = json.loads(text, object_pairs_hook=_object_without_duplicates)
+        parsed = json.loads(
+            text,
+            object_pairs_hook=_object_without_duplicates,
+            parse_constant=_reject_json_constant,
+        )
+    except RecursionError as exc:
+        raise ConfigReadError("config JSON is too deeply nested") from exc
     except (json.JSONDecodeError, ValueError) as exc:
         raise ConfigReadError("config file is not valid strict JSON") from exc
     if not isinstance(parsed, Mapping):
@@ -144,7 +209,7 @@ def _print_findings(findings) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = NeutralizingArgumentParser(
         prog="pycorscage",
         description="Audit strict CORS policy JSON and evaluate browser CORS requests.",
     )

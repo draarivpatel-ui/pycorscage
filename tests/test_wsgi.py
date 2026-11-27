@@ -17,6 +17,7 @@ STALE_HEADERS = [
     "Access-Control-Allow-Methods",
     "Access-Control-Allow-Headers",
     "Access-Control-Allow-Private-Network",
+    "Access-Control-Max-Age",
     "Access-Control-Expose-Headers",
     "access-control-expose-headers",
     "Access-Control-Allow-Unexpected",
@@ -235,6 +236,38 @@ class TestWSGIBehavior(unittest.TestCase):
         middleware = WSGICorsMiddleware(app, make_policy())
         with self.assertRaises(Exception):
             run_wsgi(middleware, {"REQUEST_METHOD": "GET"})
+
+    def test_close_capable_iterable_is_preserved(self):
+        class CloseIterable:
+            def __init__(self):
+                self.closed = False
+
+            def __iter__(self):
+                return iter([b"ok"])
+
+            def close(self):
+                self.closed = True
+
+        iterable = CloseIterable()
+
+        def app(environ, start_response):
+            start_response("200 OK", [])
+            return iterable
+
+        result = WSGICorsMiddleware(app, make_policy())({"REQUEST_METHOD": "GET"}, lambda status, headers, exc_info=None: lambda data: None)
+        self.assertIs(result, iterable)
+        result.close()
+        self.assertTrue(iterable.closed)
+
+    def test_crlf_and_comma_environ_origins_fail_closed(self):
+        middleware = WSGICorsMiddleware(lambda environ, start_response: simple_app(environ, start_response), make_policy())
+        for origin in (
+            "https://app.example.com\r\n",
+            "https://app.example.com,https://evil.example",
+        ):
+            with self.subTest(origin=origin):
+                result = run_wsgi(middleware, {"REQUEST_METHOD": "GET", "HTTP_ORIGIN": origin})
+                self.assertNotIn("access-control-allow-origin", header_map(result["headers"]))
 
     def test_invalid_app_rejected(self):
         with self.assertRaises(TypeError):

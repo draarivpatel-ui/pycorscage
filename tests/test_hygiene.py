@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -14,6 +15,25 @@ TEXT_SUFFIXES = {".py", ".md", ".toml", ".yml", ".yaml", ".txt", ".in"}
 
 def repo_files():
     output = []
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"],
+            cwd=str(ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError:
+        result = None
+    if result is not None and result.returncode == 0:
+        for encoded in result.stdout.split(b"\x00"):
+            if not encoded:
+                continue
+            path = ROOT / os.fsdecode(encoded)
+            if path.suffix in TEXT_SUFFIXES or path.name in {"LICENSE", ".gitignore", "MANIFEST.in"}:
+                output.append(path)
+        return output
+
     for base, dirs, files in os.walk(str(ROOT)):
         dirs[:] = [item for item in dirs if item not in {".git", "__pycache__", "dist", "build", ".venv"}]
         for name in files:
@@ -95,7 +115,8 @@ class TestProjectMetadata(unittest.TestCase):
 
     def test_project_urls(self):
         self.assertIn('https://github.com/draarivpatel-ui/pycorscage', self.pyproject)
-        self.assertNotIn('draarivpatel@gmail', self.pyproject)
+        private_marker = "draarivpatel" + "@" + "gmail.com"
+        self.assertNotIn(private_marker, self.pyproject)
 
     def test_python_39_compatible_constructs(self):
         offenders = []

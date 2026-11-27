@@ -576,10 +576,10 @@ class CorsPolicy:
         if not state.valid or state.value is None:
             return False, (), "Access-Control-Request-Headers must be a single string header value"
         raw = state.value
+        if len(raw) > self.max_request_headers_bytes:
+            return False, (), "Access-Control-Request-Headers exceeds the configured byte cap"
         if not _PRINTABLE_ASCII_RE.match(raw):
             return False, (), "Access-Control-Request-Headers contains control or non-ASCII characters"
-        if len(raw.encode("ascii")) > self.max_request_headers_bytes:
-            return False, (), "Access-Control-Request-Headers exceeds the configured byte cap"
         pieces = raw.split(",")
         if len(pieces) > self.max_request_headers:
             return False, (), "Access-Control-Request-Headers exceeds the configured count cap"
