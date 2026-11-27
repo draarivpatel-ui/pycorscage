@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pycorscage.cli import MAX_CONFIG_BYTES, neutralize_text, read_config_file
+from pycorscage.cli import ConfigReadError, MAX_CONFIG_BYTES, neutralize_text, read_config_file
 
 from _support import add_matrix_tests
 
@@ -159,6 +159,15 @@ class TestCliCore(CliCase):
         result = self.cli("lint", "--config", str(self.config), "--not-a-real-option")
         self.assertEqual(result.returncode, 2)
 
+    def test_argparse_error_neutralizes_terminal_controls(self):
+        hostile = "bad\x1b[31m\u202e\u2028\n[critical] forged"
+        result = self.cli("lint", "--config", str(self.config), hostile)
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn(b"\x1b", result.stderr)
+        self.assertNotIn("\u202e".encode("utf-8"), result.stderr)
+        self.assertNotIn("\u2028".encode("utf-8"), result.stderr)
+        self.assertNotIn(b"\n[critical]", result.stderr)
+
 
 class TestCliFileSafety(CliCase):
     def test_missing_file_exit_two(self):
@@ -180,6 +189,37 @@ class TestCliFileSafety(CliCase):
         result = self.cli("lint", "--config", str(self.config))
         self.assertEqual(result.returncode, 2)
 
+    def test_nonstandard_json_constants_exit_two(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                self.config.write_text('{"max_age": ' + constant + '}', encoding="utf-8")
+                result = self.cli("lint", "--config", str(self.config))
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(b"not valid strict JSON", result.stderr)
+
+    def test_deeply_nested_json_exit_two_without_traceback(self):
+        depth = 20000
+        self.config.write_text("[" * depth + "]" * depth, encoding="utf-8")
+        result = self.cli("lint", "--config", str(self.config))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"nesting cap", result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_json_nesting_cap_boundaries(self):
+        valid_depth = 127
+        self.config.write_text('{"unknown":' + "[" * valid_depth + "0" + "]" * valid_depth + "}", encoding="utf-8")
+        loaded = read_config_file(str(self.config))
+        self.assertIn("unknown", loaded)
+        invalid_depth = 128
+        self.config.write_text('{"unknown":' + "[" * invalid_depth + "0" + "]" * invalid_depth + "}", encoding="utf-8")
+        with self.assertRaises(ConfigReadError):
+            read_config_file(str(self.config))
+
+    def test_json_nesting_scanner_ignores_brackets_in_strings(self):
+        self.config.write_text('{"unknown":"' + "[" * 200 + '"}', encoding="utf-8")
+        loaded = read_config_file(str(self.config))
+        self.assertEqual(len(loaded["unknown"]), 200)
+
     def test_directory_rejected(self):
         result = self.cli("lint", "--config", str(self.dir))
         self.assertEqual(result.returncode, 2)
@@ -198,6 +238,28 @@ class TestCliFileSafety(CliCase):
             self.skipTest("symlinks unavailable")
         result = self.cli("lint", "--config", str(link))
         self.assertEqual(result.returncode, 2)
+
+    def test_symlink_rejected_without_nofollow_open_flag(self):
+        if not hasattr(os, "O_NOFOLLOW"):
+            self.skipTest("O_NOFOLLOW is already absent")
+        target = self.dir / "target.json"
+        target.write_text(json.dumps(CLEAN_CONFIG), encoding="utf-8")
+        link = self.dir / "link-no-follow.json"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        saved = os.O_NOFOLLOW
+        del os.O_NOFOLLOW
+        try:
+            with self.assertRaises(ConfigReadError):
+                read_config_file(str(link))
+        finally:
+            os.O_NOFOLLOW = saved
+
+    def test_embedded_nul_config_path_raises_config_error(self):
+        with self.assertRaises(ConfigReadError):
+            read_config_file("bad\x00path")
 
     def test_fifo_rejected(self):
         fifo = self.dir / "policy.fifo"
@@ -245,9 +307,8 @@ class TestAnsiNeutralizer(unittest.TestCase):
     def check_neutralized(self, case):
         self.assertNotIn("\x1b", neutralize_text(case))
         for char in neutralize_text(case):
-            if char not in ("\n", "\t"):
-                self.assertGreaterEqual(ord(char), 32)
-                self.assertNotEqual(ord(char), 127)
+            self.assertGreaterEqual(ord(char), 32)
+            self.assertNotEqual(ord(char), 127)
 
 
 ANSI_CASES = [
@@ -259,7 +320,20 @@ ANSI_CASES = [
     "nul\x00bell\x07delete\x7f",
     "\x1b[2J\x1b[Hhome",
     "\x9b31mnot-csi-safe",
+    "line\nforge\ttab",
+    "bidi\u202eoverride",
 ]
+
+
+class TestAnsiNeutralizerSpecific(unittest.TestCase):
+    def test_newline_and_tab_cannot_forge_output_lines(self):
+        self.assertEqual(neutralize_text("good\n[critical] forged\tline"), "good?[critical] forged?line")
+
+    def test_bidi_controls_are_replaced(self):
+        self.assertEqual(neutralize_text("bidi\u202eoverride"), "bidi?override")
+
+    def test_unicode_line_separators_are_replaced(self):
+        self.assertEqual(neutralize_text("one\u2028two\u2029three"), "one?two?three")
 
 
 add_matrix_tests(TestAnsiNeutralizer, "ansi", ANSI_CASES, TestAnsiNeutralizer.check_neutralized)

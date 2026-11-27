@@ -17,6 +17,7 @@ STALE_HEADERS = [
     b"access-control-allow-methods",
     b"access-control-allow-headers",
     b"access-control-allow-private-network",
+    b"Access-Control-Max-Age",
     b"access-control-expose-headers",
     b"Access-Control-Expose-Headers",
     b"access-control-allow-unexpected",
@@ -287,6 +288,40 @@ class TestASGIBehavior(unittest.TestCase):
         )
         mapping = header_map_bytes(start_message(messages)["headers"])
         self.assertNotIn(b"access-control-allow-origin", mapping)
+
+    def test_duplicate_origin_bytes_good_and_evil_fail_closed(self):
+        middleware = ASGICorsMiddleware(simple_asgi, make_policy())
+        for first, second in (
+            (b"https://app.example.com", b"https://evil.example"),
+            (b"https://evil.example", b"https://app.example.com"),
+        ):
+            with self.subTest(first=first, second=second):
+                messages = run_asgi(
+                    middleware,
+                    {
+                        "type": "http",
+                        "method": "GET",
+                        "headers": [(b"origin", first), (b"origin", second)],
+                        "path": "/",
+                    },
+                )
+                mapping = header_map_bytes(start_message(messages)["headers"])
+                self.assertNotIn(b"access-control-allow-origin", mapping)
+
+    def test_control_and_latin1_origin_bytes_fail_closed(self):
+        middleware = ASGICorsMiddleware(simple_asgi, make_policy())
+        for raw_origin in (
+            b"https://app.example.com\xff",
+            b"https://app.example.com\r\n",
+            b"\xff",
+        ):
+            with self.subTest(raw_origin=raw_origin):
+                messages = run_asgi(
+                    middleware,
+                    {"type": "http", "method": "GET", "headers": [(b"origin", raw_origin)], "path": "/"},
+                )
+                mapping = header_map_bytes(start_message(messages)["headers"])
+                self.assertNotIn(b"access-control-allow-origin", mapping)
 
     def test_non_byte_response_headers_rejected(self):
         async def app(scope, receive, send):

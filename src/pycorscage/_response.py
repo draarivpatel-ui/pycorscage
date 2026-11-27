@@ -13,7 +13,11 @@ def is_cors_response_header(name: str) -> bool:
     """Return whether a response field is controlled by this CORS policy."""
 
     lower = name.lower()
-    return lower.startswith("access-control-allow-") or lower == "access-control-expose-headers"
+    return (
+        lower.startswith("access-control-allow-")
+        or lower == "access-control-expose-headers"
+        or lower == "access-control-max-age"
+    )
 
 
 def apply_decision_to_headers(response_headers: Iterable[Tuple[str, str]], decision: CorsDecision) -> List[Tuple[str, str]]:
