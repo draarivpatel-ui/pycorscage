@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -334,6 +335,110 @@ class TestAnsiNeutralizerSpecific(unittest.TestCase):
 
     def test_unicode_line_separators_are_replaced(self):
         self.assertEqual(neutralize_text("one\u2028two\u2029three"), "one?two?three")
+
+
+class TestCliHelpSnapshots(unittest.TestCase):
+    _OPTIONS_HEADER_RE = re.compile(r"\b(?:options|optional arguments):")
+
+    def _run_help(self, *args):
+        result = run_cli(list(args) + ["--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, b"")
+        return " ".join(result.stdout.decode("utf-8").split())
+
+    def _assert_ordered_fragments(self, text, fragments):
+        cursor = 0
+        for fragment in fragments:
+            index = text.find(fragment, cursor)
+            self.assertNotEqual(
+                index,
+                -1,
+                "expected fragment %r after offset %d in %r" % (fragment, cursor, text),
+            )
+            cursor = index + len(fragment)
+
+    def _options_section(self, normalized):
+        match = self._OPTIONS_HEADER_RE.search(normalized)
+        self.assertIsNotNone(match, "missing options section header in %r" % (normalized,))
+        return normalized[match.end():]
+
+    def test_top_level_help_sections_and_subcommands(self):
+        normalized = self._run_help()
+        self._assert_ordered_fragments(
+            normalized,
+            [
+                "usage: pycorscage [-h] {check,lint} ...",
+                "Audit strict CORS policy JSON and evaluate browser CORS requests.",
+                "positional arguments:",
+                "{check,lint}",
+                "check evaluate one request against a policy",
+                "lint audit a policy configuration",
+            ],
+        )
+        options_text = self._options_section(normalized)
+        self.assertIn("-h, --help", options_text)
+        self.assertGreater(
+            normalized.find(options_text),
+            normalized.find("positional arguments:"),
+        )
+
+    def test_check_help_sections_and_safety_options(self):
+        normalized = self._run_help("check")
+        self._assert_ordered_fragments(
+            normalized,
+            [
+                "usage: pycorscage check",
+                "--config CONFIG",
+                "--origin ORIGIN",
+                "--method METHOD",
+                "--request-headers REQUEST_HEADERS",
+                "--preflight",
+                "--private-network",
+                "--json",
+            ],
+        )
+        options_text = self._options_section(normalized)
+        self._assert_ordered_fragments(
+            options_text,
+            [
+                "-h, --help",
+                "--config CONFIG path to a strict JSON policy file",
+                "--origin ORIGIN Origin header value to evaluate",
+                "--method METHOD request method, or Access-Control-Request-Method with --preflight",
+                "--request-headers REQUEST_HEADERS comma-separated Access-Control-Request-Headers value",
+                "--preflight evaluate as an OPTIONS CORS preflight",
+                "--private-network send Access-Control-Request-Private-Network: true",
+                "--json emit machine-readable JSON",
+            ],
+        )
+
+    def test_lint_help_sections_and_options(self):
+        normalized = self._run_help("lint")
+        self._assert_ordered_fragments(
+            normalized,
+            [
+                "usage: pycorscage lint",
+                "--config CONFIG",
+                "--json",
+            ],
+        )
+        options_text = self._options_section(normalized)
+        self._assert_ordered_fragments(
+            options_text,
+            [
+                "-h, --help",
+                "--config CONFIG path to a strict JSON policy file",
+                "--json emit machine-readable JSON",
+            ],
+        )
+        for check_only_flag in (
+            "--origin",
+            "--method",
+            "--request-headers",
+            "--preflight",
+            "--private-network",
+        ):
+            self.assertNotIn(check_only_flag, normalized)
 
 
 add_matrix_tests(TestAnsiNeutralizer, "ansi", ANSI_CASES, TestAnsiNeutralizer.check_neutralized)
